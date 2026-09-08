@@ -20,28 +20,37 @@ DEV_MODE = os.getenv("DEV_MODE", "true").lower() == "true"
 # into the provider SDK call and rejected as an unknown kwarg).
 litellm.num_retries = 3
 
-# temperature=0 across the board: deterministic outputs and fewer decoding
-# artifacts (gpt-4o-mini at default temp was appending JSON/f-string residue
-# after valid SQL in tool calls, causing sqlite tokenizer errors).
+# NOTE: all agents now run on Anthropic (OpenAI key was exhausted). The SQL
+# tools remain wrapped by SanitizedSQLTool as a safety net against any trailing
+# garbage after valid SQL, regardless of which model composes the query.
+#
+# `temperature` is NOT passed to any Anthropic model here: the installed
+# anthropic SDK (1.4.0) has dropped temperature/top_p/top_k from
+# Messages.create() entirely — confirmed via inspect.signature(), no
+# `temperature` param at all, for any model — so passing it raises
+# "unexpected keyword argument 'temperature'" regardless of tier. There's also
+# no replacement lever wired up: crewai 1.15's native Anthropic path
+# (crewai.llms.providers.anthropic.completion.AnthropicCompletion) doesn't
+# merge additional_params into the request, and its `thinking` field only
+# supports the deprecated budget_tokens shape (which itself 400s on Sonnet 5),
+# so `thinking` is left unset too — models run their default adaptive
+# thinking. Revisit if crewai adds output_config.effort support.
+_ANTHROPIC = os.environ["ANTHROPIC_API_KEY"]
 if DEV_MODE:
-    # Development: gpt-4o for Hunter/Qualifier (previously 4o-mini — upgraded
-    # because mini produced trailing `}}]}.JSONArray[{` garbage on INSERT
-    # queries despite strong prompt constraints). Evaluator keeps 4o-mini
-    # since it emits structured Pydantic output, which is well within mini's
-    # capability and isn't exposed to SQL string composition.
-    llm_hunter     = LLM(model="gpt-4.1",     api_key=os.environ["OPENAI_API_KEY"], temperature=0)
-    llm_qualifier  = LLM(model="gpt-4o",      api_key=os.environ["OPENAI_API_KEY"], temperature=0)
-    llm_copywriter = LLM(model="claude-haiku-4-5-20251001",
-                         api_key=os.environ["ANTHROPIC_API_KEY"], temperature=0)
-    llm_evaluator  = LLM(model="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"], temperature=0)
+    # Development: Sonnet 5 for Hunter/Qualifier (SQL composition + output
+    # headroom). Evaluator uses Haiku 4.5 since it emits structured Pydantic
+    # output and isn't exposed to SQL string composition.
+    llm_hunter     = LLM(model="claude-sonnet-5",            api_key=_ANTHROPIC)
+    llm_qualifier  = LLM(model="claude-sonnet-5",            api_key=_ANTHROPIC)
+    llm_copywriter = LLM(model="claude-haiku-4-5-20251001",  api_key=_ANTHROPIC)
+    llm_evaluator  = LLM(model="claude-haiku-4-5-20251001",  api_key=_ANTHROPIC)
 else:
     # Production: quality models for submission
-    # Hunter             → gpt-4.1 (32k output cap — needs room for 12 profiles + write_query INSERTs + HunterOutput in one turn)
-    # Qualifier          → gpt-4o  (accurate scoring, per-profile so no output-token pressure)
-    # Copywriter         → Claude (best writing quality per dollar)
-    # Evaluator          → gpt-4o-mini (structured scoring, doesn't need heavy model)
-    llm_hunter     = LLM(model="gpt-4.1",     api_key=os.environ["OPENAI_API_KEY"], temperature=0)
-    llm_qualifier  = LLM(model="gpt-4o",      api_key=os.environ["OPENAI_API_KEY"], temperature=0)
-    llm_copywriter = LLM(model="claude-sonnet-4-6",
-                         api_key=os.environ["ANTHROPIC_API_KEY"], temperature=0)
-    llm_evaluator  = LLM(model="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"], temperature=0)
+    # Hunter     → Sonnet 5 (room for 12 profiles + write_query INSERTs + HunterOutput in one turn)
+    # Qualifier  → Sonnet 5 (accurate scoring, per-profile so no output-token pressure)
+    # Copywriter → Sonnet 5 (best writing quality)
+    # Evaluator  → Haiku 4.5 (structured scoring, doesn't need heavy model)
+    llm_hunter     = LLM(model="claude-sonnet-5",            api_key=_ANTHROPIC)
+    llm_qualifier  = LLM(model="claude-sonnet-5",            api_key=_ANTHROPIC)
+    llm_copywriter = LLM(model="claude-sonnet-5",            api_key=_ANTHROPIC)
+    llm_evaluator  = LLM(model="claude-haiku-4-5-20251001",  api_key=_ANTHROPIC)
