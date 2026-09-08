@@ -1284,14 +1284,14 @@ def load_leads():
 def load_all_messages():
     run_start = _state.get("run_start")
     if not run_start:
-        return []
+        return [], []
 
     try:
         from database import get_connection, init_db
         init_db()
         with get_connection() as conn:
             rows = conn.execute("""
-                SELECT l.name, l.company, m.type,
+                SELECT m.id, l.name, l.company, m.type,
                        m.eval_status, m.eval_score, m.approach,
                        substr(m.content, 1, 200) AS preview,
                        m.created_at
@@ -1301,9 +1301,9 @@ def load_all_messages():
             """).fetchall()
 
         if not rows:
-            return []
+            return [], []
 
-        return [
+        table = [
             [r["name"], r["company"], r["type"],
              r["eval_status"] or "—", r["eval_score"] or "—",
              r["approach"] or "—",
@@ -1311,8 +1311,27 @@ def load_all_messages():
              r["created_at"]]
             for r in rows
         ]
+        return table, [r["id"] for r in rows]
     except Exception as e:
-        return [[f"Error: {e}", "", "", "", "", "", "", ""]]
+        return [[f"Error: {e}", "", "", "", "", "", "", ""]], []
+
+
+def show_full_message(evt: gr.SelectData, message_ids):
+    """Look up the full, untruncated content for the clicked Messages row."""
+    if not message_ids or evt.index[0] >= len(message_ids):
+        return "Select a row above to view the full message."
+
+    message_id = message_ids[evt.index[0]]
+    try:
+        from database import get_connection, init_db
+        init_db()
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT content FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+        return row["content"] if row else "Message not found."
+    except Exception as e:
+        return f"Error: {e}"
 
 
 
@@ -1680,6 +1699,8 @@ def build_ui():
                     headers=["Name", "Company", "Industry", "Seniority",
                              "Status", "Score", "Notes"],
                     datatype=["str", "str", "str", "str", "str", "number", "str"],
+                    column_widths=["120px", "120px", "120px", "100px",
+                                    "100px", "80px", "auto"],
                     interactive=False,
                     wrap=True,
                 )
@@ -1699,8 +1720,16 @@ def build_ui():
                              "Approach", "Preview", "Created"],
                     datatype=["str", "str", "str", "str", "number",
                               "str", "str", "str"],
+                    column_widths=["120px", "120px", "130px", "110px", "90px",
+                                    "150px", "auto", "120px"],
                     interactive=False,
                     wrap=True,
+                )
+                messages_ids_state = gr.State([])
+                full_message_box = gr.Textbox(
+                    label="Full message (click a row above)",
+                    lines=10,
+                    interactive=False,
                 )
 
             # ----------------------------------------------------------------
@@ -1743,8 +1772,14 @@ def build_ui():
 
         # Leads, Messages, RAG stats — every 5 s
         data_timer.tick(load_leads,        outputs=[leads_stats, leads_table])
-        data_timer.tick(load_all_messages, outputs=[messages_table])
+        data_timer.tick(load_all_messages, outputs=[messages_table, messages_ids_state])
         data_timer.tick(load_rag_stats,    outputs=[rag_stats, rag_table])
+
+        messages_table.select(
+            show_full_message,
+            inputs=[messages_ids_state],
+            outputs=[full_message_box],
+        )
 
     return demo
 

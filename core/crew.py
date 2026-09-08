@@ -49,9 +49,13 @@ def build_crew() -> tuple[MCPServerAdapter, MCPServerAdapter, Crew]:
     # Tools are wrapped in SanitizedSQLTool which retries once with a cleaned
     # prefix when the LLM hallucinates trailing JSON/f-string garbage after
     # valid SQL (only under strict certainty — see tools/sanitize_sql.py).
+    # NOTE: mcp-server-sqlite (2025.4.25) still uses the removed @server.list_resources()
+    # decorator, which crashes under the mcp 2.x SDK that uvx resolves by default.
+    # Pin mcp to a 1.x that still exposes it so uvx builds a compatible env.
     sqlite_adapter = MCPServerAdapter(StdioServerParameters(
         command="uvx",
-        args=["mcp-server-sqlite", "--db-path", _DB_PATH],
+        args=["--from", "mcp-server-sqlite", "--with", "mcp==1.9.4",
+              "mcp-server-sqlite", "--db-path", _DB_PATH],
         env={**os.environ},
     ))
 
